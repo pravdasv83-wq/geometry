@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Geometry Dash Editor</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: Arial; }
+  canvas { display: block; background: #333; }
+  #editorPanel {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.6); padding: 10px; border-radius: 5px;
+  }
+  #editorPanel input, #editorPanel button { margin: 2px; }
+  #editorPanel textarea { width: 300px; height: 100px; }
+</style>
+</head>
+<body>
+<div id="editorPanel">
+  <h3>Редактор уровней</h3>
+  X: <input type="number" id="obsX" value="500">
+  Y: <input type="number" id="obsY" value="300">
+  W: <input type="number" id="obsW" value="40">
+  H: <input type="number" id="obsH" value="40">
+  <button id="addObstacle">Добавить блок</button>
+  <button id="saveLevel">Сохранить уровень</button>
+  <button id="loadLevel">Загрузить уровень</button>
+  <br>
+  <textarea id="levelData" placeholder="JSON уровень"></textarea>
+  <p>Перетаскивай блоки мышкой, выделяй блок и нажимай Delete для удаления</p>
+</div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const gravity = 0.8;
+const jumpStrength = 15;
+const speed = 6;
+
+let dead = false;
+let deathTimer = 0;
+let particles = [];
+let progress = 0;
+let levelLength = 3000;
+
+const deathSound = new Audio('https://freesound.org/data/previews/256/256113_3263906-lq.mp3');
+
+let player = { x:100, y:canvas.height-60, size:40, dy:0, grounded:false, angle:0 };
+
+let obstacles = [
+  {x:500, y:canvas.height-60, w:40, h:40},
+  {x:900, y:canvas.height-100, w:40, h:80},
+  {x:1300, y:canvas.height-60, w:40, h:40}
+];
+
+let selectedBlock = null;
+let offsetX = 0;
+let offsetY = 0;
+
+// --- частицы ---
+function spawnParticles(x,y){
+  for(let i=0;i<25;i++){
+    particles.push({x,y,dx:(Math.random()-0.5)*10, dy:(Math.random()-0.5)*10, life:40});
+  }
+}
+
+// --- сброс игры ---
+function resetGame(){
+  player.y = canvas.height - 60;
+  player.dy = 0;
+  player.angle = 0;
+  dead=false; particles=[]; progress=0;
+  obstacles.forEach((o,i)=> o.x=500 + i*400);
+}
+
+// --- рисуем игрока ---
+function drawPlayer(){
+  const p=player;
+  ctx.save();
+  ctx.translate(p.x+p.size/2, p.y+p.size/2);
+  ctx.rotate(p.angle);
+  ctx.fillStyle="#00ff88";
+  ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size);
+  ctx.restore();
+}
+
+// --- игровой цикл ---
+function update(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // игрок
+  if(!dead){
+    player.dy+=gravity;
+    player.y+=player.dy;
+    if(player.y+player.size>=canvas.height){
+      player.y=canvas.height-player.size;
+      player.dy=0;
+      player.grounded=true;
+      player.angle=0;
+    }
+    player.angle += player.dy*0.05;
+  }
+  drawPlayer();
+
+  // препятствия
+  ctx.fillStyle="#ff3333";
+  obstacles.forEach(obs=>{
+    if(!selectedBlock) obs.x-=speed;
+    ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
+    // столкновение
+    if(!dead &&
+       player.x < obs.x + obs.w &&
+       player.x + player.size > obs.x &&
+       player.y < obs.y + obs.h &&
+       player.y + player.size > obs.y){
+      dead=true;
+      spawnParticles(player.x + player.size/2, player.y + player.size/2);
+      deathTimer=60;
+      deathSound.play();
+    }
+
+    if(obs.x+obs.w<0) obs.x=canvas.width+Math.random()*400;
+  });
+
+  // частицы
+  particles.forEach((p,i)=>{
+    p.x+=p.dx; p.y+=p.dy; p.dy+=0.3; p.life--;
+    ctx.fillStyle=`rgba(0,255,200,${p.life/40})`;
+    ctx.fillRect(p.x,p.y,6,6);
+    if(p.life<=0) particles.splice(i,1);
+  });
+
+  // эффект смерти
+  if(dead){
+    deathTimer--;
+    ctx.fillStyle="rgba(255,255,255,0.15)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    if(deathTimer<=0) resetGame();
+  }
+
+  // прогресс
+  progress+=speed;
+  ctx.fillStyle="#fff"; ctx.fillRect(20,20,(progress/levelLength)*300,20);
+  ctx.strokeStyle="#fff"; ctx.strokeRect(20,20,300,20);
+  ctx.fillStyle="#fff"; ctx.font="16px Arial";
+  ctx.fillText("Прогресс: "+Math.min(Math.floor((progress/levelLength)*100),100)+"%",20,15);
+
+  requestAnimationFrame(update);
+}
+
+// прыжок
+window.addEventListener("keydown",e=>{
+  if(e.code==="Space" && player.grounded && !dead){ player.dy=-jumpStrength; player.grounded=false; }
+  if(e.key==="Delete" && selectedBlock) {
+    obstacles = obstacles.filter(o=>o!==selectedBlock);
+    selectedBlock=null;
+  }
+});
+
+// --- мышь для перетаскивания ---
+canvas.addEventListener("mousedown", e=>{
+  const mx=e.clientX, my=e.clientY;
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o=obstacles[i];
+    if(mx>o.x && mx<o.x+o.w && my>o.y && my<o.y+o.h){
+      selectedBlock=o;
+      offsetX=mx-o.x; offsetY=my-o.y;
+      break;
+    }
+  }
+});
+canvas.addEventListener("mousemove", e=>{
+  if(selectedBlock){
+    selectedBlock.x=e.clientX-offsetX;
+    selectedBlock.y=e.clientY-offsetY;
+  }
+});
+canvas.addEventListener("mouseup", e=>{ selectedBlock=null; });
+
+// --- редактор кнопки ---
+document.getElementById('addObstacle').addEventListener('click', ()=>{
+  const x=parseInt(document.getElementById('obsX').value);
+  const y=parseInt(document.getElementById('obsY').value);
+  const w=parseInt(document.getElementById('obsW').value);
+  const h=parseInt(document.getElementById('obsH').value);
+  obstacles.push({x,y,w,h});
+});
+document.getElementById('saveLevel').addEventListener('click', ()=>{
+  document.getElementById('levelData').value=JSON.stringify(obstacles,null,2);
+});
+document.getElementById('loadLevel').addEventListener('click', ()=>{
+  try{
+    const data=JSON.parse(document.getElementById('levelData').value);
+    if(Array.isArray(data)) obstacles=data;
+  }catch(e){ alert("Неверный JSON"); }
+});
+
+update();
+</script>
+</body>
+</html>
